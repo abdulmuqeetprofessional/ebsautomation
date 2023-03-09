@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Set variables
+ORACLE_HOME="/u01/app/oracle/product/11.2.0/dbhome_1"
+ORACLE_SID="ORCL"
+MAINTENANCE_EMAIL="admin@example.com"
+SCRIPT_PATH="/path/to/script"
+BACKUP_PATH="/path/to/crontab-backup"
+PATCH_PATH="/path/to/patch"
+
+# List invalid objects
+sqlplus -s "/ as sysdba" <<EOF > invalid_objects.txt
+SET SERVEROUTPUT ON;
+SET LINESIZE 1000;
+SET PAGESIZE 0;
+SET FEEDBACK OFF;
+SELECT object_type, object_name FROM dba_objects WHERE status = 'INVALID';
+EXIT;
+EOF
+
+# Backup crontab
+crontab -l > "$BACKUP_PATH"
+
+# Remove crontab
+crontab -r
+
+# Send maintenance email
+echo "The instance will be going for patching maintenance soon. Please plan your work accordingly." | mail -s "Maintenance Notification" "$MAINTENANCE_EMAIL"
+
+# Shutdown Oracle Application services
+"$ORACLE_HOME"/opmn/bin/opmnctl stopall
+
+# Enable maintenance mode
+"$ORACLE_HOME"/appsutil/bin/adadminsrvctl.sh start
+
+# Apply patch
+"$PATCH_PATH"/runInstaller -silent -responseFile "$SCRIPT_PATH"/responsefile.rsp
+
+# List applied patches
+sqlplus -s "/ as sysdba" <<EOF > applied_patches.txt
+SET SERVEROUTPUT ON;
+SET LINESIZE 1000;
+SET PAGESIZE 0;
+SET FEEDBACK OFF;
+SELECT patch_name FROM ad_applied_patches WHERE applied_date > sysdate - 3;
+EXIT;
+EOF
+
+# Compare and list newly created invalid objects
+sqlplus -s "/ as sysdba" <<EOF > new_invalid_objects.txt
+SET SERVEROUTPUT ON;
+SET LINESIZE 1000;
+SET PAGESIZE 0;
+SET FEEDBACK OFF;
+SELECT object_type, object_name FROM dba_objects WHERE status = 'INVALID' AND created > sysdate - 3;
+EXIT;
+EOF
+
+# Disable maintenance mode
+"$ORACLE_HOME"/appsutil/bin/adadminsrvctl.sh stop
+
+# Startup Oracle Application services
+"$ORACLE_HOME"/opmn/bin/opmnctl startall
+
+# Analyze patch log file for errors
+grep -i "ERROR" "$ORACLE_HOME"/cfgtoollogs/opatch/opatch*.log > patch_errors.txt
+
+# Send email with patch errors
+if [ -s "patch_errors.txt" ]; then
+  echo "There were errors during patching. Please see attached patch_errors.txt for details." | mail -s "Patching errors" -a "patch_errors.txt" "$MAINTENANCE_EMAIL"
+fi
