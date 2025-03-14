@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#Author: Abdul Muqeet
 # Script Name: compile_invalid_objects.sh
 # Purpose: Automate compilation of invalid objects in Oracle EBS R12.2
 # Author: Abdul Muqeet
